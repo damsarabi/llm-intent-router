@@ -1,0 +1,30 @@
+{
+  "name": "llm-intent-router",
+  "version": "1.0.0",
+  "description": "A middleware router for processing and routing LLM JSON intents with Zod validation",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "peerDependencies": {
+    "zod": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "zod": "^3.23.0"
+  },
+  "keywords": [
+    "llm",
+    "intent",
+    "router",
+    "zod",
+    "typescript"
+  ],
+  "author": "",
+  "license": "ISC"
+}
