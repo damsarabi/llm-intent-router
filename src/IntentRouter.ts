@@ -25,7 +25,8 @@ export class IntentRouter<T extends SchemaDictionary> {
     try {
       parsedData = JSON.parse(strippedInput);
     } catch (error) {
-      await this.config.onError(error as Error, rawInput);
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      await this.config.onError(normalizedError, rawInput);
       return;
     }
 
@@ -59,16 +60,20 @@ export class IntentRouter<T extends SchemaDictionary> {
         continue;
       }
 
+      let validPayload: any;
       try {
-        const validPayload = schema.parse(payload);
-        await this.config.onExecute(intent as keyof T, validPayload as any);
+        validPayload = schema.parse(payload);
       } catch (error) {
         if (error instanceof z.ZodError) {
           await this.config.onError(error, intentObj);
         } else {
-          await this.config.onError(error as Error, intentObj);
+          const normalizedError = error instanceof Error ? error : new Error(String(error));
+          await this.config.onError(normalizedError, intentObj);
         }
+        continue;
       }
+
+      await this.config.onExecute(intent as keyof T, validPayload as any);
     }
   }
 }

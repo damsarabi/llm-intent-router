@@ -111,4 +111,32 @@ describe('IntentRouter', () => {
     expect(onError.mock.calls[0][0].message).toBe('Generic error');
     expect(onError.mock.calls[0][1]).toEqual({ intent: 'FAIL_INTENT', payload: {} });
   });
+
+  it('should handle non-Error thrown from JSON.parse', async () => {
+    const originalParse = JSON.parse;
+    JSON.parse = vi.fn().mockImplementation(() => { throw 'String error'; });
+    await router.process('dummy');
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(onError.mock.calls[0][0].message).toBe('String error');
+    JSON.parse = originalParse; // Restore
+  });
+
+  it('should handle non-Error thrown from schema parsing', async () => {
+    const schemas2 = {
+      FAIL: z.any().superRefine(() => { throw 'String schema error'; })
+    };
+    const router2 = new IntentRouter({ schemas: schemas2, onExecute: vi.fn(), onError });
+    await router2.process(JSON.stringify({ intent: 'FAIL', payload: {} }));
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(onError.mock.calls[0][0].message).toBe('String schema error');
+  });
+
+  it('should not swallow application errors thrown by onExecute', async () => {
+    onExecute.mockRejectedValueOnce(new Error('App crashed!'));
+    const rawInput = JSON.stringify({ intent: 'TEST_INTENT', payload: { message: 'hello' } });
+    await expect(router.process(rawInput)).rejects.toThrow('App crashed!');
+    expect(onError).not.toHaveBeenCalled();
+  });
 });
