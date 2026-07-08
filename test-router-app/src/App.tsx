@@ -1,81 +1,109 @@
+import { useState, useMemo } from 'react';
 import { z } from 'zod';
 import { IntentRouter } from 'llm-intent-router';
 
-// 1. Initialize the Router outside the component so it doesn't recreate on render
-const router = new IntentRouter({
-  schemas: {
-    TOGGLE_THEME: z.object({
-      theme: z.enum(['dark', 'light'])
-    }),
-    UPDATE_DASHBOARD: z.object({
-      region: z.string(),
-      metrics: z.array(z.string())
-    })
-  },
-  onExecute: (intent, payload) => {
-    // In a real app, this dispatches to Zustand/Redux
-    console.log(`✅ EXECUTED [${intent}]:`, payload);
-    alert(`Success: ${intent} processed. Check console.`);
-  },
-  onError: (error, rawData) => {
-    console.error(`❌ VALIDATION FAILED:`, error);
-    console.log(`Raw Data that failed:`, rawData);
-    alert(`Caught Hallucination! Check console for Zod error.`);
-  }
-});
-
 export default function App() {
-  const handleGoodAIResponse = () => {
-    // Simulating a messy LLM response wrapped in Markdown code blocks
-    const aiOutput = `\`\`\`json
-    [
-      {
-        "intent": "TOGGLE_THEME",
-        "payload": { "theme": "dark" }
-      },
-      {
-        "intent": "UPDATE_DASHBOARD",
-        "payload": { "region": "North America", "metrics": ["revenue", "churn"] }
-      }
-    ]
-    \`\`\``;
+  const [logs, setLogs] = useState<{ id: number; type: 'success' | 'error'; message: string }[]>([]);
 
-    console.log("Processing Good Response...");
+  // Helper to push logs to our UI terminal
+  const addLog = (type: 'success' | 'error', message: string) => {
+    setLogs((prev) => [...prev, { id: Date.now() + Math.random(), type, message }]);
+  };
+
+  // Initialize the router inside useMemo so it has access to addLog without re-rendering
+  const router = useMemo(() => {
+    return new IntentRouter({
+      schemas: {
+        TOGGLE_THEME: z.object({
+          theme: z.enum(['dark', 'light']),
+        }),
+        UPDATE_DASHBOARD: z.object({
+          region: z.string(),
+          metrics: z.array(z.string()),
+        }),
+      },
+      onExecute: (intent, payload) => {
+        addLog('success', `[EXECUTED] ${intent} \nPayload: ${JSON.stringify(payload, null, 2)}`);
+      },
+      onError: (error, rawData) => {
+        addLog('error', `[BLOCKED] Hallucination Caught!\nError: ${error.message}\nRaw Data: ${JSON.stringify(rawData)}`);
+      },
+    });
+  }, []);
+
+  const handleGoodAIResponse = () => {
+    setLogs([{ id: Date.now(), type: 'success', message: '--- Sending Prompt to AI ---' }]);
+    const aiOutput = `\`\`\`json\n[\n  { "intent": "TOGGLE_THEME", "payload": { "theme": "dark" } },\n  { "intent": "UPDATE_DASHBOARD", "payload": { "region": "North America", "metrics": ["revenue", "churn"] } }\n]\n\`\`\``;
     router.process(aiOutput);
   };
 
   const handleBadAIResponse = () => {
-    // Simulating the LLM hallucinating an invalid theme ("neon" is not in the Zod enum)
-    const aiOutput = `
-      {
-        "intent": "TOGGLE_THEME",
-        "payload": { "theme": "neon" }
-      }
-    `;
-
-    console.log("Processing Bad Response...");
+    setLogs([{ id: Date.now(), type: 'success', message: '--- Sending Prompt to AI ---' }]);
+    const aiOutput = `{"intent": "TOGGLE_THEME", "payload": { "theme": "neon" }}`;
     router.process(aiOutput);
   };
 
-  return (
-    <div style={{ padding: '50px', fontFamily: 'sans-serif' }}>
-      <h1>llm-intent-router Test Sandbox</h1>
-      <p>Open your browser console, then click the buttons.</p>
+  const clearLogs = () => setLogs([]);
 
-      <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
+  return (
+    <div style={{ maxWidth: '800px', margin: '40px auto', fontFamily: 'system-ui, sans-serif', color: '#333' }}>
+      <header style={{ borderBottom: '2px solid #eaeaea', paddingBottom: '20px', marginBottom: '30px' }}>
+        <h1 style={{ margin: '0 0 10px 0', fontSize: '28px' }}>llm-intent-router</h1>
+        <p style={{ margin: 0, color: '#666' }}>Deterministic state routing for unpredictable LLM outputs.</p>
+      </header>
+
+      <div style={{ display: 'flex', gap: '15px', marginBottom: '30px' }}>
         <button
           onClick={handleGoodAIResponse}
-          style={{ padding: '10px 20px', background: '#4CAF50', color: 'white', border: 'none', cursor: 'pointer' }}
+          style={{ padding: '12px 24px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
         >
-          Test 1: Good AI Response (with Markdown)
+          Simulate Valid AI Output
         </button>
-
         <button
           onClick={handleBadAIResponse}
-          style={{ padding: '10px 20px', background: '#f44336', color: 'white', border: 'none', cursor: 'pointer' }}
+          style={{ padding: '12px 24px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
         >
-          Test 2: Bad AI Response (Hallucination)
+          Simulate Hallucination
         </button>
+        <button
+          onClick={clearLogs}
+          style={{ padding: '12px 24px', background: '#f5f5f5', color: '#333', border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, marginLeft: 'auto' }}
+        >
+          Clear
+        </button>
+      </div>
+
+      <div
+        style={{
+          background: '#0d1117',
+          color: '#c9d1d9',
+          padding: '20px',
+          borderRadius: '8px',
+          minHeight: '300px',
+          maxHeight: '500px',
+          overflowY: 'auto',
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)'
+        }}
+      >
+        {logs.length === 0 ? (
+          <span style={{ color: '#8b949e' }}>Waiting for incoming AI intents...</span>
+        ) : (
+          logs.map((log) => (
+            <div
+              key={log.id}
+              style={{
+                marginBottom: '15px',
+                borderLeft: `4px solid ${log.type === 'success' ? '#2ea043' : '#f85149'}`,
+                paddingLeft: '15px',
+                whiteSpace: 'pre-wrap'
+              }}
+            >
+              {log.message}
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
