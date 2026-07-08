@@ -7,15 +7,19 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsup",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "peerDependencies": {
     "zod": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "^4.1.10",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
+    "vitest": "^4.1.10",
     "zod": "^3.25.76"
   },
   "keywords": [
