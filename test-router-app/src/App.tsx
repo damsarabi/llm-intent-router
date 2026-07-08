@@ -1,122 +1,82 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { z } from 'zod';
+import { IntentRouter } from 'llm-intent-router';
 
-function App() {
-  const [count, setCount] = useState(0)
+// 1. Initialize the Router outside the component so it doesn't recreate on render
+const router = new IntentRouter({
+  schemas: {
+    TOGGLE_THEME: z.object({
+      theme: z.enum(['dark', 'light'])
+    }),
+    UPDATE_DASHBOARD: z.object({
+      region: z.string(),
+      metrics: z.array(z.string())
+    })
+  },
+  onExecute: (intent, payload) => {
+    // In a real app, this dispatches to Zustand/Redux
+    console.log(`✅ EXECUTED [${intent}]:`, payload);
+    alert(`Success: ${intent} processed. Check console.`);
+  },
+  onError: (error, rawData) => {
+    console.error(`❌ VALIDATION FAILED:`, error);
+    console.log(`Raw Data that failed:`, rawData);
+    alert(`Caught Hallucination! Check console for Zod error.`);
+  }
+});
+
+export default function App() {
+  const handleGoodAIResponse = () => {
+    // Simulating a messy LLM response wrapped in Markdown code blocks
+    const aiOutput = `\`\`\`json
+    [
+      {
+        "intent": "TOGGLE_THEME",
+        "payload": { "theme": "dark" }
+      },
+      {
+        "intent": "UPDATE_DASHBOARD",
+        "payload": { "region": "North America", "metrics": ["revenue", "churn"] }
+      }
+    ]
+    \`\`\``;
+
+    console.log("Processing Good Response...");
+    router.process(aiOutput);
+  };
+
+  const handleBadAIResponse = () => {
+    // Simulating the LLM hallucinating an invalid theme ("neon" is not in the Zod enum)
+    const aiOutput = `
+      {
+        "intent": "TOGGLE_THEME",
+        "payload": { "theme": "neon" }
+      }
+    `;
+
+    console.log("Processing Bad Response...");
+    router.process(aiOutput);
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
+    <div style={{ padding: '50px', fontFamily: 'sans-serif' }}>
+      <h1>llm-intent-router Test Sandbox</h1>
+      <p>Open your browser console, then click the buttons.</p>
+
+      <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
         <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
+          onClick={handleGoodAIResponse}
+          style={{ padding: '10px 20px', background: '#4CAF50', color: 'white', border: 'none', cursor: 'pointer' }}
         >
-          Count is {count}
+          Test 1: Good AI Response (with Markdown)
         </button>
-      </section>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        <button
+          onClick={handleBadAIResponse}
+          style={{ padding: '10px 20px', background: '#f44336', color: 'white', border: 'none', cursor: 'pointer' }}
+        >
+          Test 2: Bad AI Response (Hallucination)
+        </button>
+      </div>
+    </div>
+  );
 }
-
-export default App

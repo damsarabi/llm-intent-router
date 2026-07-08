@@ -41,8 +41,8 @@ export class IntentRouter<T extends SchemaDictionary> {
         continue;
       }
 
-      const intentKey = intentObj.intent;
-      if (!intentKey || typeof intentKey !== 'string') {
+      const { intent, payload } = intentObj;
+      if (!intent || typeof intent !== 'string') {
         await this.config.onError(
           new Error('Missing or invalid "intent" property in payload'),
           intentObj
@@ -50,18 +50,18 @@ export class IntentRouter<T extends SchemaDictionary> {
         continue;
       }
 
-      const schema = this.config.schemas[intentKey as keyof T];
+      const schema = this.config.schemas[intent as keyof T];
       if (!schema) {
         await this.config.onError(
-          new Error(`No schema found for intent: ${intentKey}`),
+          new Error(`No schema found for intent: ${intent}`),
           intentObj
         );
         continue;
       }
 
       try {
-        const validPayload = schema.parse(intentObj);
-        await this.config.onExecute(intentKey as keyof T, validPayload as any);
+        const validPayload = schema.parse(payload);
+        await this.config.onExecute(intent as keyof T, validPayload as any);
       } catch (error) {
         if (error instanceof z.ZodError) {
           await this.config.onError(error, intentObj);
