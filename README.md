@@ -1,6 +1,6 @@
 # llm-intent-router
 
-[![npm version](https://badge.fury.io/js/llm-intent-router.svg)](https://badge.fury.io/js/llm-intent-router)
+[![npm version](https://img.shields.io/npm/v/llm-intent-router.svg)](https://www.npmjs.com/package/llm-intent-router)
 [![codecov](https://codecov.io/gh/damsarabi/llm-intent-router/branch/main/graph/badge.svg)](https://codecov.io/gh/damsarabi/llm-intent-router)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
