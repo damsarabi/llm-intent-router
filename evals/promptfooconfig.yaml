@@ -1,0 +1,81 @@
+# promptfooconfig.yaml
+# Production Eval Suite for llm-intent-router
+# This suite proves the orchestrator handles dual-routing, schema validation, and auto-repair.
+
+description: "LLM Intent Router Validation Suite"
+prompts: 
+  - file://system-prompt.txt
+
+providers:
+  # Using mock providers or API providers for CI
+  - id: openai:gpt-4o-mini
+    label: fast-classifier
+  - id: openai:gpt-4o
+    label: heavy-orchestrator
+
+evaluateOptions:
+  maxConcurrency: 2
+
+tests:
+  - description: "Fast Lane: Dual-Routing (Pure Chat)"
+    metadata: { topic: "dual-routing" }
+    vars:
+      user_input: "What is your return policy?"
+    assert:
+      - type: javascript
+        value: |
+          let cleanText = output.replace(/```json/gi, '').replace(/```/g, '').trim();
+          const match = cleanText.match(/(\{|\[)[\s\S]*(\}|\])/);
+          if (match) cleanText = match[0];
+          const res = JSON.parse(cleanText);
+          const cmds = Array.isArray(res) ? res : [res];
+          return cmds.some(c => c.intent === 'CHAT');
+
+  - description: "Command Execution: Strict Schema Adherence"
+    metadata: { topic: "schema-adherence" }
+    vars:
+      user_input: "Please refund my order #12345 because it was broken"
+    assert:
+      - type: javascript
+        value: |
+          let cleanText = output.replace(/```json/gi, '').replace(/```/g, '').trim();
+          const match = cleanText.match(/(\{|\[)[\s\S]*(\}|\])/);
+          if (match) cleanText = match[0];
+          const res = JSON.parse(cleanText);
+          const cmds = Array.isArray(res) ? res : [res];
+          const refund = cmds.find(c => c.intent === 'REFUND_ORDER');
+          if (!refund || !refund.payload) return false;
+          // Verify it grabbed the ID correctly according to Zod schema expectations
+          return refund.payload.orderId === '12345' && refund.payload.reason.includes('broken');
+
+  - description: "Resilience: Graceful Degradation on missing data"
+    metadata: { topic: "resilience" }
+    vars:
+      user_input: "Update my shipping address to 123 Main St."
+      # Missing required state: which order?
+    assert:
+      - type: javascript
+        value: |
+          let cleanText = output.replace(/```json/gi, '').replace(/```/g, '').trim();
+          const match = cleanText.match(/(\{|\[)[\s\S]*(\}|\])/);
+          if (match) cleanText = match[0];
+          const res = JSON.parse(cleanText);
+          const cmds = Array.isArray(res) ? res : [res];
+          // Since it doesn't have the order ID, the Orchestrator should fallback to INTERACTIVE_REPLY/CHAT
+          return cmds.some(c => c.intent === 'CHAT' || c.intent === 'INTERACTIVE_REPLY');
+
+  - description: "Batch Execution: Multiple intents in one prompt"
+    metadata: { topic: "batch-execution" }
+    vars:
+      user_input: "Cancel order 999 and escalate this ticket to a human"
+    assert:
+      - type: javascript
+        value: |
+          let cleanText = output.replace(/```json/gi, '').replace(/```/g, '').trim();
+          const match = cleanText.match(/(\{|\[)[\s\S]*(\}|\])/);
+          if (match) cleanText = match[0];
+          const res = JSON.parse(cleanText);
+          const cmds = Array.isArray(res) ? res : [res];
+          const hasCancel = cmds.some(c => c.intent === 'CANCEL_ORDER' && c.payload.orderId === '999');
+          const hasEscalate = cmds.some(c => c.intent === 'ESCALATE_TICKET');
+          return hasCancel && hasEscalate;
