@@ -30,11 +30,13 @@ describe('Orchestrator', () => {
     const orchestrator = new Orchestrator({
       provider: mockProvider,
       router,
-      systemPrompt: 'You are a test agent',
-      maxRetries: 2
+      systemPrompt: 'You are a test agent'
+      // Omit maxRetries to hit default branch
     });
 
-    await orchestrator.execute('do something');
+    await orchestrator.execute('do something', {
+      history: [{ role: 'user', content: 'hello' }] // Hit history branch
+    });
 
     expect(mockProvider.generateText).toHaveBeenCalledTimes(1);
     expect(mockExecute).toHaveBeenCalledWith('TEST_INTENT', { field: 'value' });
@@ -105,5 +107,28 @@ describe('Orchestrator', () => {
 
     await expect(orchestrator.execute('do something')).rejects.toThrow(/failed to generate valid JSON after 2 attempts/);
     expect(mockProvider.generateText).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws a fatal error immediately if the LLM provider throws', async () => {
+    const mockProvider: LLMProvider = {
+      generateText: vi.fn().mockRejectedValue(new Error('Network timeout')),
+      generateStructured: vi.fn()
+    };
+
+    const router = new IntentRouter({
+      schemas: mockSchemas,
+      onExecute: vi.fn(),
+      onError: vi.fn()
+    });
+
+    const orchestrator = new Orchestrator({
+      provider: mockProvider,
+      router,
+      systemPrompt: 'You are a test agent',
+      maxRetries: 2
+    });
+
+    await expect(orchestrator.execute('do something')).rejects.toThrow(/Network timeout/);
+    expect(mockProvider.generateText).toHaveBeenCalledTimes(1); // Should not retry on fatal errors
   });
 });
