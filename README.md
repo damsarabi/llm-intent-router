@@ -1,8 +1,9 @@
 # llm-intent-router
 
-[![npm version](https://img.shields.io/npm/v/llm-intent-router.svg)](https://www.npmjs.com/package/llm-intent-router)
+[![npm version](https://img.shields.io/npm/v/@damsarabi/llm-intent-router.svg)](https://www.npmjs.com/package/@damsarabi/llm-intent-router)
 [![codecov](https://codecov.io/gh/damsarabi/llm-intent-router/branch/main/graph/badge.svg)](https://codecov.io/gh/damsarabi/llm-intent-router)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Build Status](https://github.com/damsarabi/llm-intent-router/actions/workflows/ci.yml/badge.svg)](https://github.com/damsarabi/llm-intent-router/actions)
 
 **Deterministic state routing for unpredictable LLM outputs.**
 
