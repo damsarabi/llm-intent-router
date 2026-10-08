@@ -6,6 +6,9 @@ export default defineConfig({
     environment: 'node',
     coverage: {
       provider: 'v8',
+      // Count every source file, including ones no test imports.
+      include: ['src/**/*.ts'],
+      exclude: ['src/__tests__/**'],
       reporter: ['text', 'json', 'html'],
       thresholds: {
         lines: 100,

@@ -15,6 +15,7 @@ jobs:
       contents: write
       pull-requests: write
       packages: write
+      id-token: write # npm provenance
     
     steps:
       - name: Checkout Repo
@@ -23,18 +24,17 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Install Dependencies
         run: npm ci
 
+      - name: Typecheck and test
+        run: npm run typecheck && npm test
+
       - name: Build Library
         run: npm run build
-
-      # Add testing step if you have tests configured
-      # - name: Run Tests
-      #   run: npm run test
 
       - name: Create Release Pull Request or Publish to npm
         id: changesets
@@ -45,3 +45,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

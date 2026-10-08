@@ -13,19 +13,33 @@ env:
 
 jobs:
   test:
+    name: Node ${{ matrix.node }} / Zod ${{ matrix.zod }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+        zod: [3, 4]
     steps:
       - uses: actions/checkout@v4
-      - name: Use Node.js 20
+      - name: Use Node.js ${{ matrix.node }}
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: 'npm'
       - name: Install dependencies
         run: npm ci
+      - name: Use Zod ${{ matrix.zod }}
+        if: matrix.zod != 3
+        run: npm install --no-save zod@${{ matrix.zod }}
+      - name: Typecheck
+        run: npm run typecheck
       - name: Run tests with coverage
         run: npm run test:coverage
+      - name: Build
+        run: npm run build
       - name: Upload coverage to Codecov
+        if: matrix.node == 22 && matrix.zod == 3
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
