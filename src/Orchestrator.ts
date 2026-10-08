@@ -1,6 +1,6 @@
 import { LLMProvider, GenerationOptions } from './providers';
 import { IntentRouter } from './IntentRouter';
-import { SchemaDictionary } from './types';
+import { IntentError, ProcessResult, SchemaDictionary } from './types';
 
 export interface OrchestratorConfig<T extends SchemaDictionary> {
   provider: LLMProvider;
@@ -9,7 +9,24 @@ export interface OrchestratorConfig<T extends SchemaDictionary> {
   maxRetries?: number;
   /** System instruction for the heavy generator */
   systemPrompt: string;
+  /** Called before each repair attempt with the 1-based attempt that failed and its errors. */
+  onRetry?: (attempt: number, errors: IntentError[]) => void;
 }
+
+/** Thrown when the model still returns invalid intents after every retry. */
+export class OrchestratorError<T extends SchemaDictionary> extends Error {
+  constructor(message: string, public readonly result: ProcessResult<T>) {
+    super(message);
+    this.name = 'OrchestratorError';
+  }
+}
+
+const intentKey = (intent: unknown, payload: unknown) => JSON.stringify([intent, payload]);
+
+const describeError = ({ error, raw }: IntentError, index: number) => {
+  const intent = raw && typeof raw === 'object' && 'intent' in raw ? String(raw.intent) : 'response';
+  return `${index + 1}. ${intent}: ${error.message}`;
+};
 
 /**
  * The main Multi-Agent orchestrator. It acts as the bridge between the LLM and the strict IntentRouter.
@@ -23,62 +40,61 @@ export class Orchestrator<T extends SchemaDictionary> {
   }
 
   /**
-   * Sends the prompt to the LLM, attempts to parse and validate it,
-   * and automatically asks the LLM to fix it if Zod validation fails.
+   * Sends the prompt to the LLM, validates and executes the intents it returns, and asks the LLM to
+   * fix any that fail validation. Intents that already executed are never executed again, even if
+   * the model repeats them in a repair response.
    */
-  public async execute(input: string, options?: Omit<GenerationOptions, 'systemInstruction'>): Promise<void> {
-    let attempts = 0;
+  public async execute(
+    input: string,
+    options?: Omit<GenerationOptions, 'systemInstruction'>
+  ): Promise<ProcessResult<T>> {
+    const total: ProcessResult<T> = { executed: [], skipped: [], errors: [] };
+    const executedKeys = new Set<string>();
+    const history = options?.history ? [...options.history] : [];
     let currentInput = input;
-    let currentHistory = options?.history ? [...options.history] : [];
 
-    while (attempts <= this.maxRetries) {
-      try {
-        // Step 1: Generate the raw JSON text from the heavy model
-        // We use generateText and parse manually, so we can feed errors back
-        const rawText = await this.config.provider.generateText(currentInput, {
-          ...options,
-          temperature: 0, // Deterministic greedy decoding
-          systemInstruction: this.config.systemPrompt,
-          history: currentHistory,
-        });
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      // Provider errors (network, rate limit) are fatal and propagate without a retry.
+      const rawText = await this.config.provider.generateText(currentInput, {
+        ...options,
+        temperature: 0, // Deterministic greedy decoding
+        systemInstruction: this.config.systemPrompt,
+        history,
+      });
 
-        // Step 2: Try to process it through the strict Zod router
-        let validationError: Error | null = null;
-        
-        // We override the onError callback temporarily for this execution
-        // to catch errors instead of firing the global error handler
-        const originalOnError = (this.config.router as any).config.onError;
-        
-        (this.config.router as any).config.onError = (err: Error) => {
-          validationError = err;
-        };
+      // Per-call handlers: errors are collected here instead of reaching the router's onError.
+      const result = await this.config.router.process(rawText, {
+        onError: () => {},
+        skip: (intent, payload) => executedKeys.has(intentKey(intent, payload)),
+      });
 
-        await this.config.router.process(rawText);
+      for (const entry of result.executed) executedKeys.add(intentKey(entry.intent, entry.payload));
+      total.executed.push(...result.executed);
+      total.skipped.push(...result.skipped);
+      total.errors = result.errors;
 
-        // Restore global error handler
-        (this.config.router as any).config.onError = originalOnError;
+      if (result.errors.length === 0) return total;
+      if (attempt === this.maxRetries) break;
 
-        if (!validationError) {
-          // Success! The router fired the onExecute callbacks.
-          return;
-        }
-
-        // Step 3: We hit a Zod or Parse error. We need to repair.
-        console.warn(`[Orchestrator] Validation failed on attempt ${attempts + 1}:`, (validationError as Error).message);
-        
-        // Feed the error back to the LLM
-        currentHistory.push({ role: 'user', content: currentInput });
-        currentHistory.push({ role: 'assistant', content: rawText });
-        
-        currentInput = `Your previous JSON response failed schema validation. Please fix the following error and return ONLY valid JSON: ${(validationError as Error).message}`;
-        attempts++;
-
-      } catch (fatalError) {
-        // Fatal LLM API error (network, rate limit, etc)
-        throw fatalError;
-      }
+      this.config.onRetry?.(attempt + 1, result.errors);
+      history.push({ role: 'user', content: currentInput });
+      history.push({ role: 'assistant', content: rawText });
+      currentInput = this.repairPrompt(result.errors, total);
     }
 
-    throw new Error(`Orchestrator failed to generate valid JSON after ${this.maxRetries + 1} attempts.`);
+    throw new OrchestratorError(
+      `Orchestrator failed to generate valid JSON after ${this.maxRetries + 1} attempts.`,
+      total
+    );
+  }
+
+  private repairPrompt(errors: IntentError[], total: ProcessResult<T>): string {
+    const lines = ['Your previous JSON response failed schema validation:', ...errors.map(describeError)];
+    if (total.executed.length > 0) {
+      const done = total.executed.map((e) => `${String(e.intent)} ${JSON.stringify(e.payload)}`).join('; ');
+      lines.push(`These intents were already executed and must not be repeated: ${done}.`);
+    }
+    lines.push('Return ONLY the corrected versions of the failed intents, as valid JSON.');
+    return lines.join('\n');
   }
 }

@@ -5,11 +5,25 @@ export interface ClassifierOptions {
   systemPrompt: string;
   /** History context to give the classifier */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /** Called when the provider call fails (the result is then COMMAND). */
+  onError?: (error: Error) => void;
 }
+
+/** Strips code fences, quotes, backticks and trailing punctuation around a one-word answer. */
+const normalizeLabel = (text: string) =>
+  text
+    .replace(/```[a-zA-Z]*/g, '')
+    .replace(/["'`]/g, '')
+    .replace(/[.!]+$/, '')
+    .trim()
+    .toUpperCase();
 
 /**
  * A fast, deterministic router that uses a lightweight LLM call to classify
  * user input into binary paths (e.g., CHAT vs COMMAND).
+ *
+ * Only an exact CHAT answer counts as CHAT. Anything else, including a failed call, is COMMAND,
+ * so an ambiguous classification always reaches the heavy model that can act on it.
  */
 export class ClassifierAgent {
   constructor(private provider: LLMProvider) {}
@@ -26,14 +40,10 @@ export class ClassifierAgent {
         history: options.history,
       });
 
-      const clean = result.trim().toUpperCase();
-      if (clean === 'CHAT' || clean.includes('CHAT')) {
-        return 'CHAT';
-      }
-      return 'COMMAND';
+      return normalizeLabel(result) === 'CHAT' ? 'CHAT' : 'COMMAND';
     } catch (error) {
-      console.warn('[ClassifierAgent] Classification failed, defaulting to COMMAND', error);
       // Fail open to the heavy router
+      options.onError?.(error instanceof Error ? error : new Error(String(error)));
       return 'COMMAND';
     }
   }

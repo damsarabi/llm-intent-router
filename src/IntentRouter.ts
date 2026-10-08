@@ -1,5 +1,18 @@
 import { z } from 'zod';
-import { IntentRouterConfig, SchemaDictionary } from './types';
+import {
+  ErrorHandler,
+  ExtractionMode,
+  IntentRouterConfig,
+  ProcessOptions,
+  ProcessResult,
+  SchemaDictionary,
+} from './types';
+
+const WHOLE_FENCE = /^```[a-zA-Z]*\s*([\s\S]*?)\s*```$/;
+const FIRST_FENCE = /```[a-zA-Z]*\s*([\s\S]*?)```/;
+const OUTERMOST_JSON = /(\{[\s\S]*\}|\[[\s\S]*\])/;
+
+const toError = (error: unknown): Error => (error instanceof Error ? error : new Error(String(error)));
 
 export class IntentRouter<T extends SchemaDictionary> {
   private config: IntentRouterConfig<T>;
@@ -8,26 +21,47 @@ export class IntentRouter<T extends SchemaDictionary> {
     this.config = config;
   }
 
-  private stripMarkdown(rawInput: string): string {
+  /** Returns the parsed JSON, or throws the error from the first candidate tried. */
+  private parseResponse(rawInput: string): unknown {
+    const mode: ExtractionMode = this.config.extraction ?? 'fenced';
     const text = rawInput.trim();
-    // Matches markdown code blocks, capturing the content inside (ignoring leading lang tags like json)
-    const blockMatch = text.match(/^```[a-zA-Z]*\s*([\s\S]*?)\s*```$/);
-    if (blockMatch && blockMatch[1]) {
-      return blockMatch[1].trim();
+    const whole = text.match(WHOLE_FENCE);
+    const candidates = [whole ? whole[1] : text];
+
+    if (mode !== 'strict') {
+      const fenced = text.match(FIRST_FENCE);
+      if (fenced) candidates.push(fenced[1]);
     }
-    return text;
+    if (mode === 'lenient') {
+      const outer = text.match(OUTERMOST_JSON);
+      if (outer) candidates.push(outer[1]);
+    }
+
+    let firstError: unknown;
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate.trim());
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    throw firstError;
   }
 
-  public async process(rawInput: string): Promise<void> {
-    const strippedInput = this.stripMarkdown(rawInput);
-    let parsedData: any;
+  public async process(rawInput: string, options: ProcessOptions<T> = {}): Promise<ProcessResult<T>> {
+    const onError: ErrorHandler = options.onError ?? this.config.onError;
+    const result: ProcessResult<T> = { executed: [], skipped: [], errors: [] };
+    const fail = async (error: Error, raw: unknown) => {
+      result.errors.push({ error, raw });
+      await onError(error, raw);
+    };
 
+    let parsedData: unknown;
     try {
-      parsedData = JSON.parse(strippedInput);
+      parsedData = this.parseResponse(rawInput);
     } catch (error) {
-      const normalizedError = error instanceof Error ? error : new Error(String(error));
-      await this.config.onError(normalizedError, rawInput);
-      return;
+      await fail(toError(error), rawInput);
+      return result;
     }
 
     // Normalize to an array to handle batch execution
@@ -35,45 +69,40 @@ export class IntentRouter<T extends SchemaDictionary> {
 
     for (const intentObj of intents) {
       if (!intentObj || typeof intentObj !== 'object') {
-        await this.config.onError(
-          new Error('Intent payload is not a valid object'),
-          intentObj
-        );
+        await fail(new Error('Intent payload is not a valid object'), intentObj);
         continue;
       }
 
-      const { intent, payload } = intentObj;
+      const { intent, payload } = intentObj as { intent?: unknown; payload?: unknown };
       if (!intent || typeof intent !== 'string') {
-        await this.config.onError(
-          new Error('Missing or invalid "intent" property in payload'),
-          intentObj
-        );
+        await fail(new Error('Missing or invalid "intent" property in payload'), intentObj);
         continue;
       }
 
       const schema = this.config.schemas[intent as keyof T];
       if (!schema) {
-        await this.config.onError(
-          new Error(`No schema found for intent: ${intent}`),
-          intentObj
-        );
+        await fail(new Error(`No schema found for intent: ${intent}`), intentObj);
         continue;
       }
 
-      let validPayload: any;
+      let validPayload: z.infer<T[keyof T]>;
       try {
         validPayload = schema.parse(payload);
       } catch (error) {
-        if (error instanceof z.ZodError) {
-          await this.config.onError(error, intentObj);
-        } else {
-          const normalizedError = error instanceof Error ? error : new Error(String(error));
-          await this.config.onError(normalizedError, intentObj);
-        }
+        await fail(toError(error), intentObj);
         continue;
       }
 
-      await this.config.onExecute(intent as keyof T, validPayload as any);
+      const entry = { intent: intent as keyof T, payload: validPayload };
+      if (options.skip?.(entry.intent, entry.payload)) {
+        result.skipped.push(entry);
+        continue;
+      }
+
+      await this.config.onExecute(entry.intent, entry.payload);
+      result.executed.push(entry);
     }
+
+    return result;
   }
 }

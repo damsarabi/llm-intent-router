@@ -13,9 +13,9 @@ export interface LLMProvider {
 
   /**
    * Generates a structured JSON response from the LLM.
-   * Useful for the main command generation.
+   * Optional: nothing in this package calls it; it is here for providers that support native JSON output.
    */
-  generateStructured<T>(prompt: string, schema?: z.ZodType<T>, options?: GenerationOptions): Promise<T>;
+  generateStructured?<T>(prompt: string, schema?: z.ZodType<T>, options?: GenerationOptions): Promise<T>;
 }
 
 export interface GenerationOptions {

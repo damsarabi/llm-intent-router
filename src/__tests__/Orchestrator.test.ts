@@ -77,7 +77,7 @@ describe('Orchestrator', () => {
     expect(mockProvider.generateText).toHaveBeenCalledTimes(2);
     // Ensure the second call includes the error message in the history
     const secondCallArg = (mockProvider.generateText as any).mock.calls[1][0];
-    expect(secondCallArg).toContain('Expected string, received number');
+    expect(secondCallArg).toMatch(/expected string, received number/i);
     
     expect(mockExecute).toHaveBeenCalledWith('TEST_INTENT', { field: 'fixed value' });
   });
