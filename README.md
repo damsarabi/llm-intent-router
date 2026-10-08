@@ -5,73 +5,42 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://github.com/damsarabi/llm-intent-router/actions/workflows/ci.yml/badge.svg)](https://github.com/damsarabi/llm-intent-router/actions)
 
-**Deterministic state routing for unpredictable LLM outputs.**
+Turn LLM JSON output into typed, validated calls into your app.
 
-Stop piping raw LLM text into your application state. `llm-intent-router` is a lightweight, framework-agnostic middleware that safely translates non-deterministic AI text into strictly typed, Zod-validated execution callbacks.
+You define a Zod schema per intent. The router takes the model's raw text, finds the JSON, validates each intent against its schema, and calls your handler only with payloads that passed. Anything else goes to your error handler, so a malformed response never reaches your state.
 
-## The Problem
+On top of the router, two optional pieces implement a dual-lane pattern: a cheap `ClassifierAgent` that decides whether a message is plain chat or a command, and an `Orchestrator` that calls the heavier model and feeds validation errors back to it until the output is valid. The design follows the AI routing in [Jamprovise](https://jamprovise.com).
 
-Wiring Generative AI into traditional UI state (React, Zustand, Redux) is notoriously fragile:
-1. **Markdown Formatting:** Even in JSON mode, models often wrap responses in Markdown (e.g., ````json ... ````). 
-2. **Hallucinations:** LLMs hallucinate object properties or return invalid enum values.
-3. **Fatal Crashes:** Passing a raw `JSON.parse(aiOutput)` directly to your global store will eventually crash your application.
+No runtime dependencies; `zod` (v3.25+ or v4) is a peer dependency.
 
-## The Solution
-
-`llm-intent-router` acts as a safety barrier and orchestration engine between your AI and your application code. It operates in two phases:
-
-### Phase 1: The Orchestrator (Multi-Agent Routing)
-Instead of piping all user input into an expensive, slow model, you can use the `ClassifierAgent` to do a cheap, fast binary check: *Is this just a chat, or an actionable command?* 
-If it's a command, the `Orchestrator` takes over, using greedy decoding (`temperature: 0`) to force the LLM to output predictable JSON.
-
-### Phase 2: The Intent Router (Validation & Repair)
-Once the LLM outputs JSON, the Router:
-- **Sanitizes** strings by stripping Markdown code blocks.
-- **Parses** the payload (gracefully handling both single JSON objects and arrays/batches).
-- **Validates** the LLM's payload against your strict `zod` schemas.
-- **Auto-Repairs:** If Zod validation fails, the Orchestrator automatically feeds the exact Zod error back to the LLM so it can fix its own hallucination.
-- **Routes** the validated data to your execution callback, entirely typed and safe.
-
-## Installation
+## Install
 
 ```bash
-npm install llm-intent-router zod
+npm install @damsarabi/llm-intent-router zod
 ```
 
-## Quick Start
+## Quick start
 
 ```typescript
-import { IntentRouter } from 'llm-intent-router';
+import { IntentRouter } from '@damsarabi/llm-intent-router';
 import { z } from 'zod';
 
-// 1. Define your strict UI schemas
-const schemas = {
-  TOGGLE_THEME: z.object({
-    theme: z.enum(['dark', 'light']),
-  }),
-  FILTER_TABLE: z.object({
-    region: z.string(),
-    minRevenue: z.number().optional(),
-  }),
-};
-
-// 2. Initialize the router
 const router = new IntentRouter({
-  schemas,
+  schemas: {
+    TOGGLE_THEME: z.object({ theme: z.enum(['dark', 'light']) }),
+    FILTER_TABLE: z.object({ region: z.string(), minRevenue: z.number().optional() }),
+  },
   onExecute: (intent, payload) => {
-    // 🟢 SAFE: 'payload' is strictly typed based on the matched intent.
-    // Perfect place to dispatch to Zustand, Redux, or Context.
+    // payload is typed for the matched intent: dispatch to Zustand, Redux, etc.
     console.log(`Executing ${intent}:`, payload);
   },
-  onError: (error, rawItem) => {
-    // 🔴 CAUGHT: The LLM hallucinated, or parsing failed. 
-    // State remains protected.
-    console.error('LLM Validation Failed:', error.message);
+  onError: (error, raw) => {
+    // Unparseable JSON, unknown intent, or a payload that failed validation.
+    console.error('Rejected:', error.message, raw);
   },
 });
 
-// 3. Process raw AI responses (even messy ones)
-const messyAiResponse = `
+const response = `
 Here is your data:
 \`\`\`json
 [
@@ -81,54 +50,98 @@ Here is your data:
 \`\`\`
 `;
 
-// Automatically strips markdown, validates payloads, and fires onExecute twice.
-router.process(messyAiResponse);
+const result = await router.process(response);
+// result.executed: both intents; result.errors: []
 ```
 
-## Advanced: Batch Execution
+The response is either one `{ intent, payload }` object or an array of them. Intents in an array run in order, and one invalid item doesn't stop the others.
 
-The router natively supports batch execution. If the LLM returns an array of intent objects, `llm-intent-router` will parse the array and sequentially fire the `onExecute` callback for every valid intent in the batch.
+## Finding the JSON
 
-## Advanced: The Orchestrator (Auto-Repair)
+Models often wrap JSON in a code fence or add a sentence around it. The `extraction` option controls how forgiving the router is:
 
-If you want the library to handle the actual LLM API calls, you can use the `Orchestrator`. It wraps your LLM SDK and automatically feeds Zod validation errors back to the model for self-correction.
+| Mode | Accepts |
+|---|---|
+| `strict` | Raw JSON, or a response that is exactly one fenced block |
+| `fenced` (default) | Also prose around a fenced block (the first block is used) |
+| `lenient` | Also the outermost `{…}` or `[…]` in unfenced prose |
+
+`lenient` is off by default for a reason: if the model quotes JSON as an example ("for instance, `{"intent": "REFUND", …}`"), or echoes JSON a user pasted into the chat, that JSON gets executed.
+
+## The result of `process()`
 
 ```typescript
-import { Orchestrator, ClassifierAgent } from 'llm-intent-router';
+const { executed, skipped, errors } = await router.process(text, {
+  onError: (error) => {/* replaces the configured onError for this call */},
+  skip: (intent, payload) => false, // return true to validate an intent without executing it
+});
+```
 
-// Fast lane classification (e.g. Gemini Flash Lite)
-const classifier = new ClassifierAgent(myFastLLMProvider);
-const intentType = await classifier.classify(userInput, { systemPrompt: '...' });
+`executed` and `skipped` hold `{ intent, payload }` entries. Each entry in `errors` holds the `error` and the `raw` item that caused it (or the whole response text if it couldn't be parsed). Errors thrown by your own `onExecute` are not caught: they propagate to the caller.
 
-if (intentType === 'COMMAND') {
-  // Slow lane execution (e.g. Gemini Pro)
-  const orchestrator = new Orchestrator({
-    provider: myHeavyLLMProvider,
-    router: myIntentRouter,
-    maxRetries: 2, // If it hallucinates, it gets 2 chances to fix it!
-    systemPrompt: 'You are a strict JSON command engine.'
-  });
+## Orchestrator: generate, validate, repair
 
-  await orchestrator.execute(userInput); // Validates and executes safely
+```typescript
+import { Orchestrator, OrchestratorError } from '@damsarabi/llm-intent-router';
+
+const orchestrator = new Orchestrator({
+  provider: heavyModel,     // any LLMProvider, see below
+  router,
+  systemPrompt: 'You are a strict JSON command engine. Intents: TOGGLE_THEME, FILTER_TABLE.',
+  maxRetries: 2,            // default 2
+  onRetry: (attempt, errors) => console.warn(`attempt ${attempt} failed`, errors),
+});
+
+try {
+  const { executed } = await orchestrator.execute(userInput);
+} catch (e) {
+  if (e instanceof OrchestratorError) console.error(e.result.errors);
+  else throw e; // provider errors (network, rate limit) are not retried
 }
 ```
 
-## 🧪 Production Evals (Promptfoo)
+Generation always uses `temperature: 0`. If any intent fails validation, the Orchestrator sends the model the validation errors and asks for corrected versions of the failed intents only. Intents that already ran are never run again, even if the model repeats them, so a retry can't duplicate a side effect. While it is retrying, the router's own `onError` isn't called; after the last attempt it throws an `OrchestratorError` whose `result` lists what ran and what still failed.
 
-A routing engine is only as good as its tests. `llm-intent-router` ships with a production-grade [Promptfoo](https://promptfoo.dev) evaluation suite in the `evals/` directory.
+## ClassifierAgent: the fast lane
 
-The suite mathematically proves the router's resilience across 4 dimensions:
-1. **Dual-Routing Accuracy:** Proving the classifier accurately separates conversational chat from actionable commands.
-2. **Schema Adherence:** Proving the generator outputs valid JSON matching complex Zod expectations.
-3. **Resilience & Fallback:** Proving the system degrades gracefully when required data (like an `orderId`) is missing from the user's prompt.
-4. **Batch Execution:** Proving the router can execute multiple distinct intents from a single prompt.
+```typescript
+import { ClassifierAgent } from '@damsarabi/llm-intent-router';
 
-To run the evals:
+const lane = await new ClassifierAgent(fastModel).classify(userInput, {
+  systemPrompt: 'Answer with exactly one word: CHAT for small talk or questions, COMMAND for anything that changes the app.',
+});
+```
+
+Only an exact `CHAT` answer counts (case, quotes, code fences and a trailing period are ignored). Anything else, including a provider error, returns `COMMAND`, so an uncertain classification goes to the model that can act on it rather than being answered as chat. Pass `onError` to observe provider failures.
+
+## Providers
+
+The Orchestrator and classifier talk to models through a small interface, so any SDK works:
+
+```typescript
+import type { LLMProvider } from '@damsarabi/llm-intent-router';
+
+const provider: LLMProvider = {
+  async generateText(prompt, { systemInstruction, temperature, history } = {}) {
+    // call your model and return its text
+  },
+};
+```
+
+`demo.ts` has a complete Gemini adapter and runs the repair loop against a real model (`GEMINI_API_KEY=… npx tsx demo.ts`).
+
+## Sending app state as context
+
+`sanitizeForPrompt(state, { omitKeys, maxDepth })` prepares a state object for a prompt: it drops functions and the keys you name, cuts off deep nesting (default depth 5), and replaces reference cycles with `"[Circular]"`.
+
+## Tests and evals
+
+The package is covered by Vitest (`npm test`), run in CI against Node 22 and 24 with Zod 3 and Zod 4.
+
+`evals/` is a separate [Promptfoo](https://promptfoo.dev) suite for the example system prompt in `evals/system-prompt.txt`. It checks that a model following that prompt returns intents the router would accept: chat vs. command, schema shape, asking for missing data instead of inventing it, and batches. It tests the prompt and the model (OpenAI by default), not this package's code.
+
 ```bash
-npm install -g promptfoo
-cd evals
-promptfoo eval
-promptfoo view
+cd evals && npx promptfoo eval
 ```
 
 ## License

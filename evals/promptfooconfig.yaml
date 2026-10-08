@@ -1,6 +1,8 @@
 # promptfooconfig.yaml
-# Production Eval Suite for llm-intent-router
-# This suite proves the orchestrator handles dual-routing, schema validation, and auto-repair.
+# Prompt eval suite for the example system prompt in system-prompt.txt.
+# Checks that a model following the prompt returns intents the router would accept
+# (chat vs. command, schema shape, missing data, batches). It does not run this package's code;
+# the package is covered by the Vitest suite in src/__tests__.
 
 description: "LLM Intent Router Validation Suite"
 prompts: 
